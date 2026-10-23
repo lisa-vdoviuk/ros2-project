@@ -17,10 +17,13 @@ int main(int argc, char* argv[])
 
   const auto logger = node->get_logger();
 
-  // Process incoming states and action responses while main() waits.
+  // Обробляємо повідомлення та відповіді ROS в окремому потоці.
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  std::thread spinner([&executor]() { executor.spin(); });
+
+  std::thread spinner([&executor]() {
+    executor.spin();
+  });
 
   int result = 1;
 
@@ -33,42 +36,92 @@ int main(int argc, char* argv[])
       arm.setMaxVelocityScalingFactor(0.1);
       arm.setMaxAccelerationScalingFactor(0.1);
 
+      // Чекаємо на поточний стан суглобів.
       auto state = arm.getCurrentState(10.0);
+
       if (!state) {
         RCLCPP_ERROR(logger, "No current robot state received.");
         return 1;
       }
 
-      const auto* group = state->getJointModelGroup("ur_manipulator");
+      const auto* group =
+        state->getJointModelGroup("ur_manipulator");
+
       if (!group) {
         RCLCPP_ERROR(logger, "Planning group not found.");
         return 1;
       }
 
+      // Визначаємо систему координат і кінцеву ланку.
+      const auto planning_frame = arm.getPlanningFrame();
+      const auto tool_link = arm.getEndEffectorLink();
+
+      RCLCPP_INFO(
+        logger, "Planning frame: %s; end-effector link: %s",
+        planning_frame.c_str(), tool_link.c_str());
+
+      if (tool_link.empty()) {
+        RCLCPP_ERROR(logger, "End-effector link is not configured.");
+        return 1;
+      }
+
+      // Поточна поза кінця руки: позиція та орієнтація.
+      const auto pose = arm.getCurrentPose(tool_link);
+
+      RCLCPP_INFO(
+        logger,
+        "Current tool position in %s: x=%.3f y=%.3f z=%.3f m",
+        pose.header.frame_id.c_str(),
+        pose.pose.position.x,
+        pose.pose.position.y,
+        pose.pose.position.z);
+
+      RCLCPP_INFO(
+        logger,
+        "Current tool orientation (quaternion): "
+        "x=%.4f y=%.4f z=%.4f w=%.4f",
+        pose.pose.orientation.x,
+        pose.pose.orientation.y,
+        pose.pose.orientation.z,
+        pose.pose.orientation.w);
+
+      // Копіюємо поточні положення суглобів як основу цілі.
       std::vector<double> target;
       state->copyJointGroupPositions(group, target);
-      const auto& names = group->getVariableNames();
 
+      const auto& names = group->getVariableNames();
       bool found = false;
+
       for (std::size_t i = 0; i < names.size(); ++i) {
         RCLCPP_INFO(
-          logger, "%s: %.4f rad", names[i].c_str(), target[i]);
+          logger, "%s: %.4f rad",
+          names[i].c_str(), target[i]);
 
         if (names[i] == "shoulder_pan_joint") {
           target[i] += 0.2;
           found = true;
+
+          RCLCPP_INFO(
+            logger, "Target shoulder_pan_joint: %.4f rad",
+            target[i]);
         }
       }
 
-      if (!found || !arm.setJointValueTarget(target)) {
-        RCLCPP_ERROR(logger, "Target joint missing or target out of bounds.");
+      if (!found) {
+        RCLCPP_ERROR(logger, "shoulder_pan_joint not found.");
         return 1;
       }
 
-      // Plan from the same state used to calculate the target.
+      if (!arm.setJointValueTarget(target)) {
+        RCLCPP_ERROR(logger, "Joint target is out of bounds.");
+        return 1;
+      }
+
+      // Використовуємо той самий стан для початку плану.
       arm.setStartState(*state);
 
       MoveGroupInterface::Plan plan;
+
       if (arm.plan(plan) != moveit::core::MoveItErrorCode::SUCCESS) {
         RCLCPP_ERROR(logger, "Planning failed; nothing will execute.");
         return 1;
@@ -93,5 +146,6 @@ int main(int argc, char* argv[])
   executor.cancel();
   spinner.join();
   rclcpp::shutdown();
+
   return result;
 }

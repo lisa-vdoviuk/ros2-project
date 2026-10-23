@@ -11,7 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(shape_msgs REQUIRED)
-
+find_package(moveit_msgs REQUIRED)
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
@@ -23,15 +23,18 @@ if(BUILD_TESTING)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
-add_executable(first_motion src/first_motion.cpp)
-target_compile_features(first_motion PUBLIC cxx_std_17)
+add_executable(setup_scene src/setup_scene.cpp)
+target_compile_features(setup_scene PUBLIC cxx_std_17)
 
-ament_target_dependencies(first_motion
+ament_target_dependencies(setup_scene
   rclcpp
   moveit_ros_planning_interface
+  moveit_msgs
+  geometry_msgs
+  shape_msgs
 )
 
-install(TARGETS first_motion
+install(TARGETS setup_scene
   DESTINATION lib/${PROJECT_NAME}
 )
 ament_package()
